@@ -50,17 +50,37 @@ class HardwareParams:
     pwm_us_center: float = 1500.0
     pwm_us_per_deg: float = 11.1  # 约 500us / 45deg，按舵机说明书改
 
-    # IMU 机体系：x 机头，y 右，z 下。若飞控板装反，改这些 ±1
+    # IMU：TDK ICM-42688。下面 sign 是弹体系微调；芯片→弹体映射见 imu_chip_idx
     imu_gyro_sign: tuple[float, float, float] = (1.0, 1.0, 1.0)  # p, q, r
     imu_accel_sign: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    imu_model: str = "icm42688"
+    gyro_fs_dps: float = 2000.0  # 飞镖发射扰动大，不要用 MaixPy 默认 ±256 dps
+    accel_fs_g: float = 16.0  # 出膛过载常 >8 g，不要用 ±2 g
+    imu_odr_hz: float = 1000.0
+    # 芯片轴 → 弹体 pqr / ax ay az。默认：MaixCAM2 镜头朝前，芯片与板对齐
+    # body_x=chip_y, body_y=chip_x, body_z=-chip_z
+    imu_chip_idx: tuple[int, int, int] = (1, 0, 2)
+    imu_chip_sign: tuple[float, float, float] = (1.0, 1.0, -1.0)
 
-    # OpenMV 窗口后的像素内参。必须用棋盘格或单灯标定，不要抄别人的 fx
-    cam_width: float = 320.0
-    cam_height: float = 240.0
-    cam_fx: float = 228.0  # px；水平 FOV≈70° 时的粗值，标定后覆盖
-    cam_fy: float = 228.0
-    cam_cx: float = 160.0
-    cam_cy: float = 120.0
+    # MaixCAM2 窗口后的像素内参（默认按 OS04D10 水平 ~81°、640 宽估算）
+    # 必须用棋盘格或单灯标定，不要当最终值
+    cam_width: float = 640.0
+    cam_height: float = 360.0
+    cam_fx: float = 375.0
+    cam_fy: float = 378.0
+    cam_cx: float = 320.0
+    cam_cy: float = 180.0
+
+    # MaixCAM2 SPI2 默认脚：B20 SCK / B18 MOSI / B19 MISO / B21 CS1
+    spi_id: int = 2
+    spi_freq: int = 8_000_000
+    # 四路舵机 (pin, pwm_id)，顺序=混控 1~4。必须对照你们分电板丝印改
+    servo_pwm: tuple[tuple[str, int], tuple[str, int], tuple[str, int], tuple[str, int]] = (
+        ("A31", 7),
+        ("A30", 6),
+        ("A29", 5),
+        ("A28", 4),
+    )
     # 相机相对弹体：+1 表示像素增大对应弹体 +yaw / +pitch
     los_yaw_sign: float = -1.0
     los_pitch_sign: float = 1.0

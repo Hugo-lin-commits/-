@@ -2,7 +2,7 @@
 
 参考西交《制导飞镖控制算法开源整理》（2.4.4 自动驾驶仪 + 2.4.5 导引），按**同一套轴对称 X 布局**写成可跑的参考实现。你们的翼面是三角一体翼、舵在后缘，西交是旋成体加 X 尾——**回路结构相同，气动数字不同**。
 
-本目录是 Python 参考实现，按 200 Hz `step()` 写成，便于原样搬到 STM32 / 其它飞控。
+本目录是 Python 参考实现，按 200 Hz `step()` 写成。目标板是 **Sipeed MaixCAM2 + TDK ICM-42688**，视觉和控制跑在同一块板子上。
 
 ---
 
@@ -66,9 +66,11 @@
     autopilot.py     ← 串级 PID 或西交三回路
     mixer.py         ← X 四舵，饱和时保滚转
     controller.py    ← 唯一对外 step()
+    hw/              ← ICM-42688、坐标映射、MaixCAM2 PWM/SPI
   examples/
     step_once.py
     closed_loop_demo.py
+    maixcam2_main.py ← 板上主循环
 ```
 
 状态机：
@@ -112,10 +114,34 @@ python examples/closed_loop_demo.py
 
 无第三方依赖。`FlightController.step(t, dt, imu, vision)` 即一个控制拍。
 
-OpenMV 协议与深圳大学视觉开源对齐：`0xFF, xh, xl, yh, yl, w, h`。飞控侧解析见 `examples/openmv_uart.py`。
+OpenMV 串口协议仍保留在 `examples/openmv_uart.py`（如果以后视觉外置）。MaixCAM2 上视觉就在本板，走 `maixcam2_main.py`。
 
 ---
 
-## 6. 移植到板端
+## 6. MaixCAM2 + ICM-42688：回路不用改，板级必须改
 
-保持 `controller.step` 的顺序：IMU 符号 → 状态机 → LOS → 导引 → AP → 混控 → PWM。浮点运算量很小，不必 RTOS。视觉 50–80 Hz，飞控 200 Hz，视线角保持最新值即可。
+三回路、混控、PNG **不用动**。要动的是传感器、相机和 PWM。
+
+| 项 | 不要这样做 | 要这样做 |
+|---|---|---|
+| IMU | `maix.imu.IMU("default")` 板载 LSM6DSOWTR | 外接 **ICM-42688**，SPI2，自己驱动 |
+| 陀螺量程 | MaixPy 默认 ±256 °/s | **±2000 °/s**（发射扰动会超 256） |
+| 加计量程 | 默认 ±2 g | **±16 g**（出膛常 >8 g；16 g 饱和仍能触发发射判定） |
+| 姿态 | 全程用加速度计做 Mahony | 导轨上用重力定初值，**发射后只积分陀螺**（高过载时 acc 不是重力） |
+| 坐标 | 把 Maix 的 x 右 y 前 z 上直接当弹体 | 映射到 x 机头 y 右 z 下，见 `imu_chip_idx` |
+| 相机 | 抄 OpenMV 320×240、fx=228 | MaixCAM2 窗口后自己标定；默认按 ~81° 水平视场估了 640 宽 |
+| 舵机 | 以为只有 1 路 PWM | 四片后缘舵要 **4 路 PWM**，`servo_pwm` 按分电板丝印填 |
+
+WHO_AM_I 应为 `0x47`。SPI2 默认脚：B20 SCK、B18 MOSI、B19 MISO、B21 CS1。IO 是 3.3 V，不要直接接 5 V 舵机信号线（电源可以另路，线要共地）。
+
+台上先做三件事：
+
+1. 静止读 ICM-42688，WHO_AM_I=0x47，陀螺接近 0（先采零偏）。
+2. 绕机头右转，弹体 `p>0`；抬头 `q>0`。不对就改 `imu_chip_idx / imu_chip_sign`。
+3. 四路 PWM 中位 1500 µs，给 `+δp` 必须抬头。
+
+---
+
+## 7. 板上主循环
+
+保持 `controller.step` 顺序：42688 → 坐标映射 → AHRS → 状态机/导引/AP → 混控 → PWM。飞控 200 Hz；相机比它慢，视线角用最新一帧即可。入口：`examples/maixcam2_main.py`。

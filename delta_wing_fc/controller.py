@@ -1,6 +1,7 @@
 """顶层：传感器 → 导引 → 自动驾驶仪 → 混控。
 
-每个控制周期调用一次 ``FlightController.step``。移植到 STM32 时保持这个调用顺序即可。
+每个控制周期调用一次 ``FlightController.step``。
+板上（MaixCAM2）保持这个顺序：ICM-42688 → 坐标映射 → AHRS → step → PWM。
 """
 
 from __future__ import annotations
