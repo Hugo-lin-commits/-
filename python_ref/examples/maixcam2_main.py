@@ -1,6 +1,6 @@
-"""MaixCAM2 板上入口：ICM-42688 + 飞控 + 四舵 PWM。
+"""MaixCAM2 板上入口（Python 草稿）。板上请用 C++：board/maixcam2。
 
-在 MaixVision 里打开本文件运行。PC 上没有 maix 库，不要当桌面脚本跑。
+在 MaixVision 里打开本文件仍可跑。PC 上没有 maix 库，不要当桌面脚本跑。
 """
 
 from __future__ import annotations

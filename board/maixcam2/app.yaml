@@ -1,0 +1,13 @@
+id: dart_fc
+name: dart_fc
+name[zh]: 三角一体翼制导镖飞控
+version: 0.2.0
+author: Hugo-lin-commits
+icon: ""
+desc: MaixCAM2 + ICM-42688 X-delta dart flight controller
+desc[zh]: MaixCAM2 上的轴对称 X 三角一体翼飞控
+exclude:
+  - .vscode
+  - compile
+  - build
+  - dist

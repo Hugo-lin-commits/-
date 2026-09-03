@@ -1,147 +1,62 @@
-# 轴对称 X 三角一体翼 · 制导镖控制架构
+# 轴对称 X 三角一体翼 · 制导镖飞控（C++）
 
-参考西交《制导飞镖控制算法开源整理》（2.4.4 自动驾驶仪 + 2.4.5 导引），按**同一套轴对称 X 布局**写成可跑的参考实现。你们的翼面是三角一体翼、舵在后缘，西交是旋成体加 X 尾——**回路结构相同，气动数字不同**。
+目标板：**Sipeed MaixCAM2** + **TDK ICM-42688**。控制律来自西交开源（三回路 + PNG/ISMCG），**板上跑 C++**，不用 Python。
 
-本目录是 Python 参考实现，按 200 Hz `step()` 写成。目标板是 **Sipeed MaixCAM2 + TDK ICM-42688**，视觉和控制跑在同一块板子上。
-
----
-
-## 1. 整体在干什么
-
-飞镖只有约 2 秒。控制不是「把鼻子对准灯」这么简单，因果链是：
-
-```
-视觉像素 → 视线角/视线角速度
-        → 导引律给出过载（或姿态）指令
-        → 三回路自动驾驶仪给出三轴等效舵偏 δp, δr, δy
-        → X 混控拆成四片后缘舵
-        → 气动力矩改姿态 → 一体翼改升力/侧力 → 弹道弯向目标
-```
-
-滚转单独稳住、指令恒为 0（侧滑转弯）。相机和弹体固连，滚转一歪，像素和升力矢量一起歪。
-
-西交把弹体小扰动线性化后冻结系数，三通道解耦：
-
-| 通道 | 西交结构 | 我们是否共用 |
-|------|----------|--------------|
-| 滚转 | 三回路姿态（K0 外环、K1 独立积分、Kg 速率阻尼） | 独立一组增益 |
-| 俯仰 | 伪攻角三回路过载自动驾驶仪 | 与偏航**同一结构** |
-| 偏航 | 与俯仰同一套自动驾驶仪 | 轴对称 X 所以初值相同，参数对象分开便于微调节 |
-
-这是西交能「俯仰/偏航共用一套 AP」的前提：**后视 X、上下左右对称**。三角一体翼只要四片一样、安装角 ±45°，这个前提仍然成立。不要因为翼面是三角形就改成飞机那样的盘旋转弯。
+`python_ref/` 是当初的算法草稿，**不要烧到板子上**。改参只改 `include/dart_fc/core.hpp`。
 
 ---
 
-## 2. 和西交相同、和西交必须改
+## 在电脑上先验证（不接板）
 
-**照搬**
+需要 g++（例如 `C:\c++\mingw64\bin\g++.exe`）：
 
-- 3-2-1 欧拉角、小扰动 + 系数冻结（飞行不到 2 秒，不必增益调度，先冻结）
-- 滚转三回路（纯比例两回路去不掉舵机零偏静差；PI 挤在外环会吃相位）
-- 俯仰/偏航伪攻角三回路（攻角测不到，用陀螺一阶滤波，不用加速度计积分）
-- 先 PNG，机动目标再上 ISMCG（测不到目标加速度，所以不用 APNG）
-- 大攻角滚转耦合用前馈补（西交自己也说理论解耦、实测有耦合）
-
-**必须改（三角一体翼 / 你们的硬件）**
-
-1. **气动冻结点**：西交 `a_ω, a_α, a_δ, b_α, b_δ, d_ω, d_δ` 是他们 CFD 的。一体翼后缘舵舵效通常弱于全动尾舵；无涵道则 `b_α` 里没有 `+P/(mV)`。建议冻结在下降段约 12 m/s，不要冻在出膛 18 m/s。
-2. **k_ACT 符号**：西交尾舵取 −1。后缘升降副翼若「四片同向正偏 → 抬头」取 `+1`。
-3. **舵机带宽**：西交舵约 10 Hz，把回路截止压到 ~2 Hz，上升时间 0.88 s，2 秒弹道里偏慢。你们测自己舵机 0°–60° 时间，截止取舵机频率的 1/5 左右。
-4. **混控编号、舵机正反向、相机 fx/fy、IMU 安装符号**：台架上校，写在 `params.py` 的 L0。
-5. **r0, v0**：ISMCG/PNG 的接近几何，按发射点到前哨/基地实测，不是抄 18 m。
-
-第一发不要上三回路极点配置。`autopilot_mode = "cascade_pid"`、`guidance_mode = "pixel_angle"` 先打通，再换 PNG + 三回路。
-
----
-
-## 3. 分层与文件
-
-```
-控制架构/
-  delta_wing_fc/
-    params.py        ← 所有要改的数字，按 L0~L4 分级
-    fsm.py           ← idle→launch→coast→seek→guide→terminal
-    los.py           ← OpenMV 像素 → 视线角
-    guidance.py      ← pixel_angle / PNG / ISMCG
-    autopilot.py     ← 串级 PID 或西交三回路
-    mixer.py         ← X 四舵，饱和时保滚转
-    controller.py    ← 唯一对外 step()
-    hw/              ← ICM-42688、坐标映射、MaixCAM2 PWM/SPI
-  examples/
-    step_once.py
-    closed_loop_demo.py
-    maixcam2_main.py ← 板上主循环
+```bat
+cd /d 本仓库目录
+g++ -std=c++17 -O2 -Iinclude examples\test_hw_remap.cpp -o test_hw_remap.exe
+g++ -std=c++17 -O2 -Iinclude examples\closed_loop_demo.cpp -o closed_loop_demo.exe
+test_hw_remap.exe
+closed_loop_demo.exe
 ```
 
-状态机：
-
-| 阶段 | 做什么 |
-|------|--------|
-| idle | 配平，等过载阈值或镖架触发 |
-| launch | ~80 ms 保持配平，过发射扰动 |
-| coast | 只稳滚转，不导引 |
-| seek | 等灯；超时则 hold |
-| guide | 导引 + 三轴控制 |
-| terminal | 缩小指令，避免末端打满舵振荡 |
-| hold/done | 丢灯或超时，只稳住姿态 |
+串级大约收到 −1°，三回路大约 0.9°（初值约 20° 滚转）。
 
 ---
 
-## 4. 调参顺序（按这个来，不要同时拧十个旋钮）
+## 在 MaixCAM2 上编译
 
-1. **台架 L0**：四舵中位、正偏方向、混控编号。给 `δp>0` 必须抬头；给 `δr>0` 必须右滚。
-2. **地面 IMU**：静止时 roll/pitch 约 0，绕机头右转 `p>0`。
-3. **手抛 / 短距**：`cascade_pid` + 只开滚转，确认出膛不滚。
-4. **俯仰串级**：打固定俯仰阶跃（小角度），看超调。西交积分关掉会有静差，加上会有轻抖，这是正常的。
-5. **偏航串级**：轴对称则从俯仰复制，再按落地左右偏差微调节。
-6. **视觉**：标定 `cam_fx/fy`，`pixel_angle` 模式看像素能不能把鼻子拉向灯。
-7. **PNG**：`N` 从 3 起。N 太大末端会晃。
-8. **CFD/辨识 → 填 AeroFrozen → 切 three_loop**。极点配置目标：阻尼 > 0.7，幅值裕度 > 6 dB，相位裕度 > 40°（西交指标）。
-9. **下降段乱滚**：把 `roll_ff_alpha_beta` 从 0 往上加。
-10. **基地移动**：`guidance_mode = "ismcg"`，先标定 `r0/v0`。
+用 [MaixCDK](https://github.com/sipeed/MaixCDK)（MaixPy 的 C++ 版），先保证官方 `hello_world` 能编过。
 
-所有数字的注释都在 `delta_wing_fc/params.py`。
-
----
-
-## 5. 运行
-
-```bash
-cd 控制架构
-python examples/step_once.py
-python examples/closed_loop_demo.py
+```bat
+set MAIXCDK_PATH=你的MaixCDK路径
+cd board\maixcam2
+maixcdk build -p maixcam2
 ```
 
-无第三方依赖。`FlightController.step(t, dt, imu, vision)` 即一个控制拍。
+也可以把 `board/maixcam2` 拷进 `MaixCDK/projects/dart_fc`，并把仓库的 `include/` 放到能被 `main/CMakeLists.txt` 找到的位置（默认相对路径是仓库根下的 `include/`）。
 
-OpenMV 串口协议仍保留在 `examples/openmv_uart.py`（如果以后视觉外置）。MaixCAM2 上视觉就在本板，走 `maixcam2_main.py`。
+接线：
 
----
+- ICM-42688 → SPI2：B20 SCK、B18 MOSI、B19 MISO、B21 CS1
+- 四路舵机 PWM 脚在 `HardwareParams::servo_pin`，按你们分电板改
+- **不要用**板载 LSM6DSOWTR。WHO_AM_I 必须是 `0x47`
+- 陀螺 ±2000 °/s，加计 ±16 g。发射后只积分陀螺
 
-## 6. MaixCAM2 + ICM-42688：回路不用改，板级必须改
+若编译报 `write_read` 找不到，对照本机 `maix_spi.hpp` 改 `MaixSpiBus::xfer`，控制律文件不用动。
 
-三回路、混控、PNG **不用动**。要动的是传感器、相机和 PWM。
-
-| 项 | 不要这样做 | 要这样做 |
-|---|---|---|
-| IMU | `maix.imu.IMU("default")` 板载 LSM6DSOWTR | 外接 **ICM-42688**，SPI2，自己驱动 |
-| 陀螺量程 | MaixPy 默认 ±256 °/s | **±2000 °/s**（发射扰动会超 256） |
-| 加计量程 | 默认 ±2 g | **±16 g**（出膛常 >8 g；16 g 饱和仍能触发发射判定） |
-| 姿态 | 全程用加速度计做 Mahony | 导轨上用重力定初值，**发射后只积分陀螺**（高过载时 acc 不是重力） |
-| 坐标 | 把 Maix 的 x 右 y 前 z 上直接当弹体 | 映射到 x 机头 y 右 z 下，见 `imu_chip_idx` |
-| 相机 | 抄 OpenMV 320×240、fx=228 | MaixCAM2 窗口后自己标定；默认按 ~81° 水平视场估了 640 宽 |
-| 舵机 | 以为只有 1 路 PWM | 四片后缘舵要 **4 路 PWM**，`servo_pwm` 按分电板丝印填 |
-
-WHO_AM_I 应为 `0x47`。SPI2 默认脚：B20 SCK、B18 MOSI、B19 MISO、B21 CS1。IO 是 3.3 V，不要直接接 5 V 舵机信号线（电源可以另路，线要共地）。
-
-台上先做三件事：
-
-1. 静止读 ICM-42688，WHO_AM_I=0x47，陀螺接近 0（先采零偏）。
-2. 绕机头右转，弹体 `p>0`；抬头 `q>0`。不对就改 `imu_chip_idx / imu_chip_sign`。
-3. 四路 PWM 中位 1500 µs，给 `+δp` 必须抬头。
+视觉找灯接进 `VisionSample vis`（`valid/px/py/w/h`）。
 
 ---
 
-## 7. 板上主循环
+## 目录
 
-保持 `controller.step` 顺序：42688 → 坐标映射 → AHRS → 状态机/导引/AP → 混控 → PWM。飞控 200 Hz；相机比它慢，视线角用最新一帧即可。入口：`examples/maixcam2_main.py`。
+```
+include/dart_fc.hpp               总头文件
+include/dart_fc/core.hpp          参数、类型、坐标映射
+include/dart_fc/control.hpp       状态机 / 导引 / 三回路 / 混控
+include/dart_fc/hw.hpp            ICM-42688、AHRS
+board/maixcam2/                   MaixCDK 工程（板上入口）
+examples/                         PC 仿真（C++）
+python_ref/                       旧 Python 草稿
+```
+
+回路：滚转指令恒 0，俯仰/偏航共用自动驾驶仪，饱和时保滚转。

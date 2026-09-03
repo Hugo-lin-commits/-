@@ -5,3 +5,10 @@ __pycache__/
 .vscode/
 *.csv
 record_*.avi
+*.exe
+*.obj
+*.o
+build/
+dist/
+compile/
+.DS_Store
